@@ -1,0 +1,48 @@
+{
+  "name": "paymcp",
+  "version": "0.0.1",
+  "description": "Provider-agnostic payment layer for MCP (Model Context Protocol) tools and agents.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean --sourcemap"
+  },
+  "author": "Blust Inc",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.0.14",
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "payments",
+    "mcp",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blustAI/paymcp-ts"
+  },
+  "packageManager": "pnpm@10.12.4+sha512.5ea8b0deed94ed68691c9bad4c955492705c5eeb8a87ef86bc62c74a26b037b08ff9570f108b2e4dbd1dd1a9186fea925e527f141c648e85af45631074680184",
+  "dependencies": {
+    "zod": "3.23.4"
+  }
+}
