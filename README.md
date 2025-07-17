@@ -109,7 +109,8 @@ server.registerTool(
     },
     price: { amount: 0.19, currency: "USD" },
   },
-  async ({ a, b }) => {
+  async ({ a, b }, extra) => {
+    // `extra` is required by the PayMCP tool signature — include it even if unused
     return {
       content: [{ type: "text", text: String(a + b) }],
     };
