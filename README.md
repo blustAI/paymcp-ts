@@ -83,7 +83,7 @@ import { installPayMCP, PaymentFlow } from "paymcp";
 
 installPayMCP(server, {
   providers: {
-    "provider_name": {"api_key": "your-api-key-here"},
+    "provider_name": {"apiKey": "your-api-key-here"},
   },
   paymentFlow: PaymentFlow.ELICITATION, // or TWO_STEP / PROGRESS
 });
@@ -93,7 +93,7 @@ installPayMCP(server, {
 
 ### 3. Register a paid tool
 
-Unlike Python (where you used `@price`), in Node you specify a `price` object in the tool config you pass to `registerTool()`.
+Specify a `price` object in the tool config you pass to `registerTool()`.
 
 ```ts
 import { z } from "zod";
