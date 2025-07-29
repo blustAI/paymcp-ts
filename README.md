@@ -120,6 +120,8 @@ server.registerTool(
 
 Start your MCP transport (stdio / http / ws) as usual. Any MCP client that connects will see the tool (and—depending on flow—be prompted to pay).
 
+> **Demo server:** For a complete setup (Express + Streamable HTTP), see the example repo: [node-paymcp-server-demo](https://github.com/blustAI/node-paymcp-server-demo).
+
 ---
 
 ## 🧩 Supported Providers
