@@ -159,6 +159,15 @@ See `src/providers/walleot.ts` and `src/providers/stripe.ts` for examples. Add y
 
 ---
 
+## Documentation
+
+See the [docs](./docs/) directory for detailed guides:
+
+- [Development Guide](./docs/DEVELOPMENT.md) - Setup and development
+- [PayPal Integration Guide](./docs/PAYPAL_INTEGRATION.md) - PayPal provider setup
+- [Testing Guide](./docs/TESTING.md) - Test framework and practices
+- [Example Server](./examples/dev-server/README.md) - Demo server
+
 ## 📄 License
 
 MIT License
