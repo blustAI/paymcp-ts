@@ -1,4 +1,5 @@
 import { PaymentFlow } from "./payment.js";
+import { type Logger } from "../types/logger.js";
 
 export interface PriceConfig {
     amount: number;
@@ -13,7 +14,7 @@ export interface PayToolConfig extends Record<string, any> {
 }
 
 export interface PayMCPOptions {
-    providers: Record<string, { apiKey: string }>;
+    providers: Record<string, Record<string, any>>;
     paymentFlow?: PaymentFlow;
     retrofitExisting?: boolean;
 }
