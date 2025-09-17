@@ -1,5 +1,6 @@
 import { WalleotProvider } from "./walleot.js";
 import { StripeProvider } from "./stripe.js";
+import { PayPalProvider } from "./paypal.js";
 import type { BasePaymentProvider } from "./base.js";
 import { type Logger } from "../types/logger.js";
 
@@ -10,6 +11,7 @@ const PROVIDER_MAP: Record<
 > = {
   stripe: StripeProvider,
   walleot: WalleotProvider,
+  paypal: PayPalProvider,  
 };
 
 export type ProviderInstances = Record<string, BasePaymentProvider>;
