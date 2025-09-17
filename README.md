@@ -126,8 +126,11 @@ Start your MCP transport (stdio / http / ws) as usual. Any MCP client that conne
 
 ## 🧩 Supported Providers
 
-- ✅ **Walleot** – Simple payment session API (create + poll).
-- ✅ **Stripe Checkout** – Redirect / hosted checkout; poll `payment_status`.
+- ✅ [Adyen](https://www.adyen.com)
+- ✅ [PayPal](https://paypal.com)
+- ✅ [Stripe](https://stripe.com)
+- ✅ [Walleot](https://walleot.com/developers)
+
 - 🔜 More providers welcome! Open an issue or PR.
 
 ---
