@@ -15,11 +15,10 @@ export class PayMCP {
 
     constructor(server: McpServerLike, opts: PayMCPOptions) {
         this.server = server;
-        this.providers = buildProviders(opts.providers || {});
+        this.providers = buildProviders(opts.providers as any);//TODO
         this.flow = opts.paymentFlow ?? PaymentFlow.TWO_STEP;
         this.wrapperFactory = makeFlow(this.flow);
         this.originalRegisterTool = server.registerTool.bind(server);
-
         this.patch();
         if (opts.retrofitExisting) {
             // Try to re-register existing tools (if SDK allows)
