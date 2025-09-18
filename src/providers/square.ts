@@ -13,7 +13,6 @@ const PRODUCTION_URL = "https://connect.squareup.com";
 export interface SquareProviderOpts {
   accessToken: string;
   locationId: string;
-  applicationId?: string;
   sandbox?: boolean;
   redirectUrl?: string;
   apiVersion?: string;  // Add API version option
@@ -24,7 +23,7 @@ export interface SquareProviderOpts {
  * Standard provider options interface (for compatibility with provider map).
  */
 export interface SquareStandardOpts {
-  apiKey: string; // Expected format: "accessToken:locationId:sandbox" or "accessToken:locationId:sandbox:applicationId"
+  apiKey: string; // Expected format: "accessToken:locationId:sandbox"
   logger?: Logger;
 }
 
@@ -52,7 +51,6 @@ interface SquarePaymentLinkResponse {
 export class SquareProvider extends BasePaymentProvider {
   private accessToken: string;
   private locationId: string;
-  private applicationId?: string;
   private baseUrl: string;
   private redirectUrl: string;
   private apiVersion: string;
@@ -64,14 +62,13 @@ export class SquareProvider extends BasePaymentProvider {
     if ('apiKey' in opts) {
       const parts = opts.apiKey.split(':');
       if (parts.length < 3) {
-        throw new Error('[SquareProvider] apiKey must be in format "accessToken:locationId:sandbox" or "accessToken:locationId:sandbox:applicationId"');
+        throw new Error('[SquareProvider] apiKey must be in format "accessToken:locationId:sandbox"');
       }
 
       parsedOpts = {
         accessToken: parts[0],
         locationId: parts[1],
         sandbox: parts[2] === 'sandbox',
-        applicationId: parts[3], // Optional 4th part
         logger: opts.logger,
       };
     } else {
@@ -84,12 +81,11 @@ export class SquareProvider extends BasePaymentProvider {
 
     this.accessToken = parsedOpts.accessToken;
     this.locationId = parsedOpts.locationId;
-    this.applicationId = parsedOpts.applicationId;
     this.baseUrl = parsedOpts.sandbox !== false ? SANDBOX_URL : PRODUCTION_URL;
     this.redirectUrl = parsedOpts.redirectUrl ?? "https://example.com/success";
     this.apiVersion = parsedOpts.apiVersion ?? process.env.SQUARE_API_VERSION ?? "2025-03-19";
 
-    this.logger.debug(`[SquareProvider] ready - locationId: ${this.locationId}, applicationId: ${this.applicationId}, apiVersion: ${this.apiVersion}`);
+    this.logger.debug(`[SquareProvider] ready - locationId: ${this.locationId}, apiVersion: ${this.apiVersion}`);
   }
 
   /**
