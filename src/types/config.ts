@@ -1,5 +1,6 @@
 import { PaymentFlow } from "./payment.js";
 import { type Logger } from "../types/logger.js";
+import type { StateStoreProvider } from "../core/state-store.js";
 
 export interface PriceConfig {
     amount: number;
@@ -17,6 +18,7 @@ export interface PayMCPOptions {
     providers: Record<string, Record<string, any>>;
     paymentFlow?: PaymentFlow;
     retrofitExisting?: boolean;
+    stateStore?: StateStoreProvider;
 }
 
 export interface ToolExtraLike {

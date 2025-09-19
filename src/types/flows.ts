@@ -2,6 +2,7 @@
 import type { PriceConfig } from "./config.js";
 import type { BasePaymentProvider } from "../providers/base.js";
 import type { McpServerLike } from "./mcp.js";
+import type { StateStoreProvider } from "../core/state-store.js";
 import { Logger } from "./logger.js";
 
 
@@ -14,7 +15,8 @@ export type PaidWrapperFactory = (
   provider: BasePaymentProvider,
   priceInfo: PriceConfig,
   toolName: string,
-  logger?: Logger
+  logger?: Logger,
+  stateStore?: StateStoreProvider
 ) => ToolHandler;
 
 

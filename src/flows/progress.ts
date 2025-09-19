@@ -7,6 +7,7 @@ import type { PaidWrapperFactory, ToolHandler } from "../types/flows.js";
 import { Logger } from "../types/logger.js";
 import { ToolExtraLike } from "../types/config.js";
 import { normalizeStatus } from "../utils/payment.js";
+import type { StateStoreProvider } from "../core/state-store.js";
 
 
 export const DEFAULT_POLL_MS = 3_000; // poll provider every 3s
@@ -69,7 +70,8 @@ export const makePaidWrapper: PaidWrapperFactory = (
     provider,
     priceInfo,
     toolName,
-    logger
+    logger,
+    stateStore
 ) => {
     const log: Logger = logger ?? (provider as any).logger ?? console;
 
@@ -85,17 +87,95 @@ export const makePaidWrapper: PaidWrapperFactory = (
             ? (maybeExtra as ToolExtraLike)
             : (paramsOrExtra as ToolExtraLike);
 
+        // Extract session ID from extra context
+        const sessionId = extra?.sessionId;
+
+        // Check for existing payment state if we have a session ID and state store
+        let paymentId: string | undefined;
+        let paymentUrl: string | undefined;
+
+        if (sessionId && stateStore) {
+            log?.debug?.(`[PayMCP:Progress] Checking state store for sessionId=${sessionId}`);
+            const state = await stateStore.get(sessionId);
+
+            if (state) {
+                log?.info?.(`[PayMCP:Progress] Found existing payment state for sessionId=${sessionId}`);
+                paymentId = state.payment_id;
+                paymentUrl = state.payment_url;
+                const storedArgs = state.tool_args;
+                const storedToolName = state.tool_name;
+
+                // Check payment status with provider
+                try {
+                    const status = normalizeStatus(await provider.getPaymentStatus(paymentId));
+                    log?.info?.(`[PayMCP:Progress] Payment status for ${paymentId}: ${status}`);
+
+                    if (status === "paid") {
+                        // Payment already completed! Execute tool with original arguments
+                        log?.info?.(`[PayMCP:Progress] Previous payment detected, executing with original request`);
+
+                        // Clean up state
+                        await stateStore.delete(sessionId);
+
+                        // Use stored arguments if they were for this function
+                        if (storedToolName === toolName) {
+                            // Use stored args instead of current ones
+                            const result = await callOriginal(func, storedArgs?.params, extra);
+                            return result;
+                        } else {
+                            // Different function, just execute normally
+                            return await callOriginal(func, toolArgs, extra);
+                        }
+                    } else if (status === "pending") {
+                        // Payment still pending, continue with existing payment
+                        log?.info?.(`[PayMCP:Progress] Payment still pending, continuing with existing payment`);
+                        // Continue to polling with existing payment
+                    } else if (status === "canceled") {
+                        // Payment failed, clean up and create new one
+                        log?.info?.(`[PayMCP:Progress] Previous payment canceled, creating new payment`);
+                        await stateStore.delete(sessionId);
+                        paymentId = undefined;
+                        paymentUrl = undefined;
+                    }
+                } catch (err) {
+                    log?.error?.(`[PayMCP:Progress] Error checking payment status: ${err}`);
+                    // If we can't check status, create a new payment
+                    await stateStore.delete(sessionId);
+                    paymentId = undefined;
+                    paymentUrl = undefined;
+                }
+            }
+        }
+
         // -----------------------------------------------------------------------
-        // 1. Create payment session
+        // 1. Create payment session if needed
         // -----------------------------------------------------------------------
-        const { paymentId, paymentUrl } = await provider.createPayment(
-            priceInfo.amount,
-            priceInfo.currency,
-            `${toolName}() execution fee`
-        );
-        log?.debug?.(
-            `[PayMCP:Progress] created payment id=${paymentId} url=${paymentUrl}`
-        );
+        if (!paymentId) {
+            const payment = await provider.createPayment(
+                priceInfo.amount,
+                priceInfo.currency,
+                `${toolName}() execution fee`
+            );
+            paymentId = payment.paymentId;
+            paymentUrl = payment.paymentUrl;
+            log?.debug?.(
+                `[PayMCP:Progress] created payment id=${paymentId} url=${paymentUrl}`
+            );
+
+            // Store payment state if we have session ID and state store
+            if (sessionId && stateStore) {
+                log?.info?.(`[PayMCP:Progress] Storing payment state for sessionId=${sessionId}`);
+                await stateStore.put(sessionId, {
+                    session_id: sessionId,
+                    payment_id: paymentId,
+                    payment_url: paymentUrl,
+                    tool_name: toolName,
+                    tool_args: { params: toolArgs },  // Store args for replay
+                    status: 'requested',
+                    created_at: Date.now()
+                });
+            }
+        }
 
         // -----------------------------------------------------------------------
         // 2. Initial progress message (0%) with payment link
@@ -159,6 +239,10 @@ export const makePaidWrapper: PaidWrapperFactory = (
                     0,
                     100
                 );
+                // Clean up state on cancellation
+                if (sessionId && stateStore) {
+                    await stateStore.delete(sessionId);
+                }
                 return {
                     content: [{ type: "text", text: "Payment canceled." }],
                     annotations: { payment: { status: "canceled", payment_id: paymentId } },
@@ -185,6 +269,14 @@ export const makePaidWrapper: PaidWrapperFactory = (
             log?.warn?.(
                 `[PayMCP:Progress] timeout waiting for payment paymentId=${paymentId}`
             );
+            // Don't delete state on timeout - payment might still complete
+            if (sessionId && stateStore) {
+                const state = await stateStore.get(sessionId);
+                if (state) {
+                    state.status = 'timeout';
+                    await stateStore.put(sessionId, state);
+                }
+            }
             return {
                 content: [{ type: "text", text: "Payment timeout reached; aborting." }],
                 annotations: {
@@ -201,7 +293,22 @@ export const makePaidWrapper: PaidWrapperFactory = (
         // 4. Payment succeeded -> invoke wrapped tool handler
         // -----------------------------------------------------------------------
         log.info?.(`[PayMCP:Progress] payment confirmed; invoking original tool ${toolName}`);
+
+        // Update state to paid if we have state store
+        if (sessionId && stateStore) {
+            const state = await stateStore.get(sessionId);
+            if (state) {
+                state.status = 'paid';
+                await stateStore.put(sessionId, state);
+            }
+        }
+
         const toolResult = await callOriginal(func, toolArgs, extra);
+
+        // Clean up state after successful execution
+        if (sessionId && stateStore) {
+            await stateStore.delete(sessionId);
+        }
         // Ensure toolResult has required MCP 'content' field; if not, synthesize text.
         if (!toolResult || !Array.isArray((toolResult as any).content)) {
             return {
