@@ -1,4 +1,4 @@
-import { PaymentFlow } from "./payment.js";
+import { PaymentFlowType } from "../utils/constants.js";
 import { type Logger } from "../types/logger.js";
 import type { StateStoreProvider } from "../core/state-store.js";
 
@@ -16,7 +16,7 @@ export interface PayToolConfig extends Record<string, any> {
 
 export interface PayMCPOptions {
     providers: Record<string, Record<string, any>>;
-    paymentFlow?: PaymentFlow;
+    paymentFlow?: PaymentFlowType;
     retrofitExisting?: boolean;
     stateStore?: StateStoreProvider;
 }

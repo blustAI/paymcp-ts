@@ -127,7 +127,7 @@ export const ResponseType = {
  * - Avoids complex branching logic in unified implementation
  * - Easier testing and maintenance of individual flows
  */
-export const FlowType = {
+export const PaymentFlow = {
     /** Two-step flow: separate payment initiation and confirmation */
     TWO_STEP: 'two_step',
 
@@ -141,5 +141,5 @@ export const FlowType = {
     OOB: 'oob',
 } as const;
 
-/** Type for flow type values with full TypeScript type safety */
-export type FlowTypeValue = typeof FlowType[keyof typeof FlowType];
+/** Type for payment flow values with full TypeScript type safety */
+export type PaymentFlowType = typeof PaymentFlow[keyof typeof PaymentFlow];
