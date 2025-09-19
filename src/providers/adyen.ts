@@ -3,6 +3,7 @@ import { type CreatePaymentResult } from "../types/payment.js";
 import {
   BasePaymentProvider,
 } from "./base.js";
+import { PaymentStatus } from "../utils/constants.js";
 
 const ADYEN_API_TEST_URL = "https://checkout-test.adyen.com/v71";
 const ADYEN_API_LIVE_URL = "https://checkout-live.adyen.com/v71";
@@ -74,12 +75,12 @@ export class AdyenProvider extends BasePaymentProvider {
     );
     const status = payment?.status;
     if (status === "completed") {
-      return "paid";
+      return PaymentStatus.PAID;
     } else if (status === "active") {
-      return "pending";
+      return PaymentStatus.PENDING;
     } else if (status === "expired") {
-      return "failed";
+      return PaymentStatus.FAILED;
     }
-    return status ?? "unknown";
+    return status ?? PaymentStatus.PENDING;
   }
 }

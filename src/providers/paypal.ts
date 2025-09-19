@@ -1,6 +1,7 @@
 import { type Logger } from "../types/logger.js";
 import { type CreatePaymentResult } from "../types/payment.js";
 import { BasePaymentProvider } from "./base.js";
+import { PaymentStatus } from "../utils/constants.js";
 
 const SANDBOX_URL = "https://api-m.sandbox.paypal.com";
 const PRODUCTION_URL = "https://api-m.paypal.com";
@@ -252,19 +253,19 @@ export class PayPalProvider extends BasePaymentProvider {
           `[PayPalProvider] Failed to capture ${paymentId}:`,
           error
         );
-        return "pending";
+        return PaymentStatus.PENDING;
       }
     }
 
     // Map PayPal status to unified status
     switch (order.status) {
       case "COMPLETED":
-        return "paid";
+        return PaymentStatus.PAID;
       case "VOIDED":
       case "EXPIRED":
-        return "canceled";
+        return PaymentStatus.CANCELED;
       default:
-        return "pending";
+        return PaymentStatus.PENDING;
     }
   }
 }

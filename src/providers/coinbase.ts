@@ -1,6 +1,7 @@
 import { type Logger } from "../types/logger.js";
 import { type CreatePaymentResult } from "../types/payment.js";
 import { BasePaymentProvider } from "./base.js";
+import { PaymentStatus } from "../utils/constants.js";
 
 const BASE_URL = "https://api.commerce.coinbase.com";
 
@@ -87,13 +88,13 @@ export class CoinbaseProvider extends BasePaymentProvider {
     const lastStatus = timeline.length ? String(timeline[timeline.length - 1].status) : undefined;
 
     // Compact mapping with support for confirmOnPending
-    if (lastStatus === "COMPLETED" || lastStatus === "RESOLVED") return "paid";
-    if (lastStatus === "PENDING") return this.confirmOnPending ? "paid" : "pending";
-    if (lastStatus === "EXPIRED" || lastStatus === "CANCELED") return "failed";
+    if (lastStatus === "COMPLETED" || lastStatus === "RESOLVED") return PaymentStatus.PAID;
+    if (lastStatus === "PENDING") return this.confirmOnPending ? PaymentStatus.PAID : PaymentStatus.PENDING;
+    if (lastStatus === "EXPIRED" || lastStatus === "CANCELED") return PaymentStatus.FAILED;
 
     // Fallback to completion fields
-    if (data.completed_at || data.confirmed_at) return "paid";
-    return "pending";
+    if (data.completed_at || data.confirmed_at) return PaymentStatus.PAID;
+    return PaymentStatus.PENDING;
   }
 
   /** Convert USDC → USD for local_price (Commerce expects fiat). */
