@@ -1,6 +1,6 @@
 import { PayMCPOptions, PayToolConfig } from "../types/config.js";
 import { McpServerLike } from "../types/mcp.js";
-import { PaymentFlow, PaymentFlowType } from "../utils/constants.js";
+import { PaymentFlow } from "../utils/constants.js";
 import { buildProviders, ProviderInstances } from "../providers/index.js";
 import { appendPriceToDescription } from "../utils/messages.js";
 import { makeFlow } from "../flows/index.js";
@@ -9,7 +9,7 @@ import { StateStoreProvider, InMemoryStore } from "./state-store.js";
 export class PayMCP {
     private server: McpServerLike;
     private providers: ProviderInstances;
-    private flow: PaymentFlowType;
+    private flow: PaymentFlow;
     private wrapperFactory: ReturnType<typeof makeFlow>;
     private originalRegisterTool: McpServerLike["registerTool"];
     private stateStore: StateStoreProvider;
