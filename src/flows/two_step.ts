@@ -216,15 +216,8 @@ function ensureConfirmTool(
   return confirmToolName;
 }
 
-export const makePaidWrapper: PaidWrapperFactory = (
-  func,
-  server: McpServerLike,
-  provider: BasePaymentProvider,
-  priceInfo: PriceConfig,
-  toolName: string,
-  logger?: Logger,
-  stateStore?: StateStoreProvider
-) => {
+export const makePaidWrapper: PaidWrapperFactory = (options) => {
+  const { func, server, provider, priceInfo, toolName, logger, stateStore } = options;
   const log: Logger = logger ?? (provider as any).logger ?? console;
 
   // Eagerly register confirm tool so the client sees it in the initial tool list

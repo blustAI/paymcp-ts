@@ -8,16 +8,17 @@ import { Logger } from "./logger.js";
 
 export type ToolHandler = (...args: any[]) => Promise<any> | any;
 
+export interface PaidWrapperOptions {
+  func: ToolHandler;
+  server: McpServerLike;
+  provider: BasePaymentProvider;
+  priceInfo: PriceConfig;
+  toolName: string;
+  logger?: Logger;
+  stateStore?: StateStoreProvider;
+}
 
-export type PaidWrapperFactory = (
-  func: ToolHandler,
-  server: McpServerLike,
-  provider: BasePaymentProvider,
-  priceInfo: PriceConfig,
-  toolName: string,
-  logger?: Logger,
-  stateStore?: StateStoreProvider
-) => ToolHandler;
+export type PaidWrapperFactory = (options: PaidWrapperOptions) => ToolHandler;
 
 
 export type FlowModule = {

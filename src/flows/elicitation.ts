@@ -51,15 +51,8 @@ const SimpleActionSchema = {
  * 5. If canceled -> return a structured canceled response.
  * 6. If still unpaid after N attempts -> return pending status so the caller can retry.
  */
-export const makePaidWrapper: PaidWrapperFactory = (
-  func,
-  _server: McpServerLike,
-  provider: BasePaymentProvider,
-  priceInfo: PriceConfig,
-  toolName: string,
-  logger?: Logger,
-  stateStore?: StateStoreProvider
-) => {
+export const makePaidWrapper: PaidWrapperFactory = (options) => {
+  const { func, provider, priceInfo, toolName, logger, stateStore } = options;
   const log: Logger = logger ?? (provider as any).logger ?? console;
 
   async function wrapper(paramsOrExtra: any, maybeExtra?: any) {

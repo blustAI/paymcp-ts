@@ -31,6 +31,7 @@ export class PayMCP {
         }
     }
 
+
     /** Return server (useful for chaining) */
     getServer() {
         return this.server;
@@ -70,7 +71,14 @@ export class PayMCP {
                 };
 
                 // wrap the handler in a payment flow
-                wrapped = self.wrapperFactory(handler, self.server, provider, price, name, undefined, self.stateStore);
+                wrapped = self.wrapperFactory({
+                    func: handler,
+                    server: self.server,
+                    provider,
+                    priceInfo: price,
+                    toolName: name,
+                    stateStore: self.stateStore
+                });
             }
 
             return self.originalRegisterTool(name, config, wrapped);

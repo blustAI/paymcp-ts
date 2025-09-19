@@ -62,15 +62,8 @@ async function safeReportProgress(
         `progress ${progressPct}/${totalPct}: ${message}`);
 }
 
-export const makePaidWrapper: PaidWrapperFactory = (
-    func,
-    _server,
-    provider,
-    priceInfo,
-    toolName,
-    logger,
-    stateStore
-) => {
+export const makePaidWrapper: PaidWrapperFactory = (options) => {
+    const { func, provider, priceInfo, toolName, logger, stateStore } = options;
     const log: Logger = logger ?? (provider as any).logger ?? console;
 
     async function wrapper(paramsOrExtra: any, maybeExtra?: any) {
