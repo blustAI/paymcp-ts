@@ -1,6 +1,7 @@
 import { type Logger } from "../types/logger.js";
 import { type CreatePaymentResult } from "../types/payment.js";
 import { BasePaymentProvider } from "./base.js";
+import { PaymentStatus } from "../utils/constants.js";
 
 const SANDBOX_URL = "https://connect.squareupsandbox.com";
 const PRODUCTION_URL = "https://connect.squareup.com";
@@ -198,7 +199,7 @@ export class SquareProvider extends BasePaymentProvider {
       );
 
       if (!paymentLinkResponse?.payment_link?.order_id) {
-        return "pending";
+        return PaymentStatus.PENDING;
       }
 
       const orderId = paymentLinkResponse.payment_link.order_id;
@@ -214,24 +215,24 @@ export class SquareProvider extends BasePaymentProvider {
 
       // If net amount due is 0, the order is fully paid
       if (netAmountDue === 0) {
-        return "paid";
+        return PaymentStatus.PAID;
       }
 
       // Map Square order state to unified status
       switch (orderResponse?.order?.state) {
         case "COMPLETED":
-          return "paid";
+          return PaymentStatus.PAID;
         case "CANCELED":
-          return "canceled";
+          return PaymentStatus.CANCELED;
         case "OPEN":
         case "DRAFT":
         default:
-          return "pending";
+          return PaymentStatus.PENDING;
       }
     } catch (error) {
       this.logger.error(`[SquareProvider] Error checking status:`, error);
       // If we can't check status, assume it's still pending
-      return "pending";
+      return PaymentStatus.PENDING;
     }
   }
 

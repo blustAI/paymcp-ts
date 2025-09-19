@@ -1,4 +1,4 @@
-// Two‑step payment flow 
+// Two-step payment flow
 //
 // Flow:
 //   Step 1 (initiate): when the original tool is called, we create a payment,
@@ -12,50 +12,50 @@
 //   the original tool handler. If payment is not complete, it returns an error.
 //
 // NOTE:
-// - Stored args are kept in a process‑local Map. For production you may want
+// - Stored args are kept in a process-local Map. For production you may want
 //   Redis or another store to survive process restarts.
-// - We return MCP‑compatible result objects that always include `content` to
+// - We return MCP-compatible result objects that always include `content` to
 //   avoid downstream schema errors (e.g., Pydantic in Python clients).
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// NOTE: This flow is intentionally light on typing because we support running
-// under multiple MCP server implementations (with or without the official SDK).
 
 import type { PaidWrapperFactory, ToolHandler } from "../types/flows.js";
 import type { McpServerLike } from "../types/mcp.js";
 import type { BasePaymentProvider } from "../providers/base.js";
 import type { PriceConfig } from "../types/config.js";
+import type { StateStoreProvider } from "../core/state-store.js";
 import { paymentPromptMessage } from "../utils/messages.js";
 import { Logger } from "../types/logger.js";
-
+import { normalizeStatus } from "../utils/payment.js";
+import { extractSessionId, logContextInfo } from "../utils/context.js";
+import {
+  checkExistingPayment,
+  savePaymentState,
+  updatePaymentStatus,
+  cleanupPaymentState
+} from "../utils/state.js";
+import {
+  callOriginalTool,
+  normalizeToolArgs,
+  logFlow
+} from "../utils/flow.js";
+import {
+  buildPendingResponse,
+  buildErrorResponse,
+  buildSuccessResponse,
+  formatTwoStepMessage
+} from "../utils/response.js";
+import { PaymentStatus } from "../utils/constants.js";
 import { z } from "zod";
 
-// Simple in‑memory arg storage. Keyed by paymentId string.
+// Simple in-memory arg storage. Keyed by paymentId string.
 const PENDING_ARGS = new Map<
   string,
   {
-    // args passed to the original tool (normalized params object or undefined)
     args: any;
-    // unix ms timestamp when the initiate step ran
     ts: number;
   }
 >();
-
-/**
- * Safely invoke the original tool handler preserving the (args, extra) vs (extra)
- * call shapes used by the MCP TS SDK.
- */
-async function callOriginal(
-  func: ToolHandler,
-  toolArgs: any | undefined,
-  extra: any
-) {
-  if (toolArgs !== undefined) {
-    return await func(toolArgs, extra);
-  } else {
-    return await func(extra);
-  }
-}
 
 /**
  * Register (or return existing) confirmation tool.
@@ -66,122 +66,143 @@ function ensureConfirmTool(
   provider: BasePaymentProvider,
   toolName: string,
   originalHandler: ToolHandler,
-  log?: Logger
+  log?: Logger,
+  stateStore?: StateStoreProvider
 ): string {
   const confirmToolName = `confirm_${toolName}_payment`;
 
-  log?.debug?.(`[PayMCP:TwoStep] ensureConfirmTool(${confirmToolName})`);
+  logFlow(log, 'TwoStep', 'debug', `ensureConfirmTool(${confirmToolName})`);
 
-  // Detect if already registered (server API shape may vary; we duck‑type).
+  // Detect if already registered
   const srvAny = server as any;
   const toolsMap: Map<
     string,
     { config: any; handler: ToolHandler }
   > | undefined = srvAny?.tools;
+
   if (toolsMap?.has(confirmToolName)) {
-    log?.debug?.(`[PayMCP:TwoStep] confirm tool already registered.`);
+    logFlow(log, 'TwoStep', 'debug', 'confirm tool already registered');
     return confirmToolName;
   }
 
-  // Minimal param schema (Zod) for confirmation tool.
-  // Using Zod avoids keyValidator/_parse errors seen when passing plain JSON object.
+  // Minimal param schema (Zod) for confirmation tool
   const inputSchema = {
     payment_id: z.string(),
   };
 
-  // Confirmation handler: verify payment, retrieve saved args, invoke original tool.
+  // Confirmation handler: verify payment, retrieve saved args, invoke original tool
   const confirmHandler: ToolHandler = async (
     paramsOrExtra: any,
     maybeExtra?: any
   ) => {
-    const hasArgs = arguments.length === 2;
-    const params = hasArgs ? paramsOrExtra : undefined;
-    const extra = hasArgs ? maybeExtra : paramsOrExtra;
+    const { hasArgs, toolArgs: params, extra } = normalizeToolArgs(paramsOrExtra, maybeExtra);
 
-    log?.info?.(`[PayMCP:TwoStep] confirm handler invoked for ${toolName}`);
+    logFlow(log, 'TwoStep', 'info', `confirm handler invoked for ${toolName}`);
 
     const paymentId: string | undefined = hasArgs
       ? (params as any)?.payment_id
-      : (extra as any)?.payment_id; // defensive fallback
+      : (extra as any)?.payment_id;
 
-    log?.debug?.(`[PayMCP:TwoStep] confirm received payment_id=${paymentId}`);
+    logFlow(log, 'TwoStep', 'debug', `confirm received payment_id=${paymentId}`);
 
     if (!paymentId) {
-      return {
-        content: [{ type: "text", text: "Missing payment_id." }],
-        status: "error",
-        message: "Missing payment_id",
-      };
+      return buildErrorResponse("Missing payment_id");
     }
 
-    const stored = PENDING_ARGS.get(String(paymentId));
+    // Try to retrieve args from state store using optimized lookup
+    let stored: { args: any; ts: number } | undefined;
+    let sessionId: string | undefined;
 
-    log?.debug?.(`[PayMCP:TwoStep] PENDING_ARGS keys=${Array.from(PENDING_ARGS.keys()).join(",")}`);
+    if (stateStore) {
+      // Try optimized O(1) lookup using payment_id index
+      let state = await stateStore.getByPaymentId(paymentId);
+      if (state) {
+        stored = {
+          args: state.tool_args?.params,
+          ts: state.created_at || Date.now()
+        };
+        sessionId = state.session_id;
+        logFlow(log, 'TwoStep', 'debug',
+          'Retrieved args via payment_id index');
+      } else {
+        // Fallback: Try direct key lookup (for backward compatibility)
+        state = await stateStore.get(paymentId);
+        if (state) {
+          stored = {
+            args: state.tool_args?.params,
+            ts: state.created_at || Date.now()
+          };
+          sessionId = state.session_id;
+          logFlow(log, 'TwoStep', 'debug',
+            'Retrieved args from state store using payment_id as key');
+        }
+      }
+    }
+
+    // Fall back to legacy PENDING_ARGS if not found in state store
+    if (!stored) {
+      stored = PENDING_ARGS.get(String(paymentId));
+      logFlow(log, 'TwoStep', 'debug',
+        `Retrieved args from legacy PENDING_ARGS, keys=${Array.from(PENDING_ARGS.keys()).join(",")}`);
+    }
 
     if (!stored) {
-      return {
-        content: [{ type: "text", text: "Unknown or expired payment_id." }],
-        status: "error",
-        message: "Unknown or expired payment_id",
-        payment_id: paymentId,
-      };
+      return buildErrorResponse(
+        "Unknown or expired payment_id",
+        undefined,
+        paymentId
+      );
     }
 
-    // Check provider status.
+    // Check provider status
     let status: string;
     try {
       status = await provider.getPaymentStatus(paymentId);
-      log?.debug?.(`[PayMCP:TwoStep] provider.getPaymentStatus(${paymentId}) -> ${status}`);
+      logFlow(log, 'TwoStep', 'debug',
+        `provider.getPaymentStatus(${paymentId}) -> ${status}`);
     } catch (err) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Failed to check payment status: ${(err as Error).message}`,
-          },
-        ],
-        status: "error",
-        message: "Failed to check payment status",
-        payment_id: paymentId,
-      };
+      return buildErrorResponse(
+        `Failed to check payment status: ${(err as Error).message}`,
+        "status_check_failed",
+        paymentId
+      );
     }
 
     const statusLc = String(status).toLowerCase();
-    if (statusLc !== "paid") {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Payment status is ${status}, expected 'paid'.`,
-          },
-        ],
-        status: "error",
-        message: `Payment status is ${status}, expected 'paid'`,
-        payment_id: paymentId,
-      };
+    if (statusLc !== PaymentStatus.PAID) {
+      return buildErrorResponse(
+        `Payment status is ${status}, expected 'paid'`,
+        undefined,
+        paymentId
+      );
     }
 
-    // We're good—consume stored args and call original.
-    PENDING_ARGS.delete(String(paymentId));
-    log?.info?.(`[PayMCP:TwoStep] payment confirmed; calling original tool ${toolName}`);
-    const toolResult = await callOriginal(
+    // We're good—call original tool
+    logFlow(log, 'TwoStep', 'info',
+      `payment confirmed; calling original tool ${toolName}`);
+
+    const toolResult = await callOriginalTool(
       originalHandler,
       stored.args,
-      extra /* pass confirm extra */
+      extra
     );
-    // If toolResult missing content, synthesize one.
-    if (!toolResult || !Array.isArray((toolResult as any).content)) {
-      return {
-        content: [
-          { type: "text", text: "Tool completed after confirmed payment." },
-        ],
-        raw: toolResult,
-      };
+
+    // Clean up based on where we got the args from
+    if (sessionId && stateStore) {
+      // Clean up the primary entry
+      // The StateStore will automatically clean up the payment_id index
+      await cleanupPaymentState(sessionId, stateStore, log);
+      logFlow(log, 'TwoStep', 'debug',
+        `Cleaned up state for session_id=${sessionId}, payment_id index auto-removed`);
+    } else {
+      // Args came from legacy PENDING_ARGS, remove from there
+      PENDING_ARGS.delete(String(paymentId));
     }
-    return toolResult;
+
+    return buildSuccessResponse(toolResult);
   };
 
-  // Register the confirm tool (no price, so PayMCP will not wrap it again).
+  // Register the confirm tool (no price, so PayMCP will not wrap it again)
   srvAny.registerTool(
     confirmToolName,
     {
@@ -195,34 +216,64 @@ function ensureConfirmTool(
   return confirmToolName;
 }
 
-export const makePaidWrapper: PaidWrapperFactory = (
-  func,
-  server: McpServerLike,
-  provider: BasePaymentProvider,
-  priceInfo: PriceConfig,
-  toolName: string,
-  logger?: Logger
-) => {
+export const makePaidWrapper: PaidWrapperFactory = (options) => {
+  const { func, server, provider, priceInfo, toolName, logger, stateStore } = options;
   const log: Logger = logger ?? (provider as any).logger ?? console;
 
-  // Eagerly register confirm tool so the client sees it in the initial tool list.
-  // (Matches Python behaviour where @mcp.tool registers at import time.)
+  // Eagerly register confirm tool so the client sees it in the initial tool list
   const confirmToolName = ensureConfirmTool(
     server,
     provider,
     toolName,
     func,
-    log
+    log,
+    stateStore
   );
 
   async function twoStepWrapper(paramsOrExtra: any, maybeExtra?: any) {
-    const hasArgs = arguments.length === 2;
-    const toolArgs = hasArgs ? paramsOrExtra : undefined;
-    const extra = hasArgs ? maybeExtra : paramsOrExtra;
+    const { hasArgs, toolArgs, extra } = normalizeToolArgs(paramsOrExtra, maybeExtra);
 
-    log?.debug?.(`[PayMCP:TwoStep] initiate wrapper invoked for ${toolName}, hasArgs=${hasArgs}`);
+    logFlow(log, 'TwoStep', 'debug',
+      `initiate wrapper invoked for ${toolName}, hasArgs=${hasArgs}`);
 
-    // Create payment.
+    // Extract session ID from extra context
+    const sessionId = extractSessionId(extra, log);
+
+    // Check for existing payment state
+    const checkResult = await checkExistingPayment(
+      sessionId, stateStore, provider, toolName, { params: toolArgs }, log
+    );
+
+    // If payment was already completed, execute immediately
+    if (checkResult.shouldExecuteImmediately) {
+      const argsToUse = checkResult.storedArgs?.params || toolArgs;
+      return await callOriginalTool(func, argsToUse, extra);
+    }
+
+    // If payment exists but is still pending, return existing payment info
+    if (checkResult.paymentId && checkResult.paymentUrl) {
+      const message = formatTwoStepMessage(
+        `Payment still pending: ${paymentPromptMessage(
+          checkResult.paymentUrl,
+          priceInfo.amount,
+          priceInfo.currency
+        )}`,
+        checkResult.paymentUrl,
+        checkResult.paymentId,
+        confirmToolName
+      );
+
+      return buildPendingResponse(
+        JSON.stringify(message),
+        checkResult.paymentId,
+        checkResult.paymentUrl,
+        confirmToolName,
+        priceInfo.amount,
+        priceInfo.currency
+      );
+    }
+
+    // Create payment
     const { paymentId, paymentUrl } = await provider.createPayment(
       priceInfo.amount,
       priceInfo.currency,
@@ -231,50 +282,40 @@ export const makePaidWrapper: PaidWrapperFactory = (
 
     const pidStr = String(paymentId);
 
-    // Stash original args. (We do not store `extra`; new extra will come on confirm.)
-    PENDING_ARGS.set(pidStr, { args: toolArgs, ts: Date.now() });
+    // Store payment state - StateStore now automatically indexes by payment_id
+    await savePaymentState(
+      sessionId, stateStore, paymentId, paymentUrl,
+      toolName, { params: toolArgs }, PaymentStatus.REQUESTED, log
+    );
 
-    // Build message shown to user / LLM.
-    const _message = paymentPromptMessage(
+    // Note: With the new payment_id index in StateStore, we no longer need
+    // to store duplicate entries. The StateStore automatically maintains
+    // a payment_id -> key index for O(1) lookups.
+    if (!stateStore) {
+      // Fall back to legacy PENDING_ARGS when no state store
+      PENDING_ARGS.set(pidStr, { args: toolArgs, ts: Date.now() });
+    }
+
+    // Build message shown to user / LLM
+    const message = formatTwoStepMessage(
+      paymentPromptMessage(paymentUrl, priceInfo.amount, priceInfo.currency),
       paymentUrl,
+      pidStr,
+      confirmToolName
+    );
+
+    logFlow(log, 'TwoStep', 'info',
+      `payment initiated pid=${pidStr} url=${paymentUrl} next=${confirmToolName}`);
+
+    // Return step-1 response with proper structure
+    return buildPendingResponse(
+      JSON.stringify(message),
+      pidStr,
+      paymentUrl,
+      confirmToolName,
       priceInfo.amount,
       priceInfo.currency
     );
-
-    const message = JSON.stringify({
-      "message": _message,
-      "payment_url": paymentUrl,
-      "payment_id": paymentId,
-      "next_step": confirmToolName
-    })
-
-    log?.info?.(`[PayMCP:TwoStep] payment initiated pid=${pidStr} url=${paymentUrl} next=${confirmToolName}`);
-
-    // Return step‑1 response. Include content to satisfy MCP schemas.
-    return {
-      // Human-facing message (shown in most MCP UIs)
-      content: [{ type: "text", text: message }],
-      // Machine-friendly payload (FastMCP Python will expose this as `structured_content`)
-      structured_content: {
-        payment_url: paymentUrl,
-        payment_id: pidStr,
-        next_step: confirmToolName,
-        status: "payment_required",
-        amount: priceInfo.amount,
-        currency: priceInfo.currency,
-      },
-      // Some clients also surface `data`; include for redundancy / future-proofing.
-      data: {
-        payment_url: paymentUrl,
-        payment_id: pidStr,
-        next_step: confirmToolName,
-        status: "payment_required",
-        amount: priceInfo.amount,
-        currency: priceInfo.currency,
-      },
-      // Deprecated / backward-compat fields (kept for introspection; safe to remove later)
-      message,
-    };
   }
 
   return twoStepWrapper as unknown as ToolHandler;

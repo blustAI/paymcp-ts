@@ -1,9 +1,10 @@
 import { PayMCPOptions, PayToolConfig } from "../types/config.js";
 import { McpServerLike } from "../types/mcp.js";
-import { PaymentFlow } from "../types/payment.js";
+import { PaymentFlow } from "../utils/constants.js";
 import { buildProviders, ProviderInstances } from "../providers/index.js";
 import { appendPriceToDescription } from "../utils/messages.js";
 import { makeFlow } from "../flows/index.js";
+import { StateStoreProvider, InMemoryStore } from "./state-store.js";
 
 export class PayMCP {
     private server: McpServerLike;
@@ -11,6 +12,7 @@ export class PayMCP {
     private flow: PaymentFlow;
     private wrapperFactory: ReturnType<typeof makeFlow>;
     private originalRegisterTool: McpServerLike["registerTool"];
+    private stateStore: StateStoreProvider;
     private installed = false;
 
     constructor(server: McpServerLike, opts: PayMCPOptions) {
@@ -19,12 +21,16 @@ export class PayMCP {
         this.flow = opts.paymentFlow ?? PaymentFlow.TWO_STEP;
         this.wrapperFactory = makeFlow(this.flow);
         this.originalRegisterTool = server.registerTool.bind(server);
+        // Initialize state store (default to InMemoryStore)
+        this.stateStore = opts.stateStore || new InMemoryStore();
+        console.log(`[PayMCP] Initialized with flow=${this.flow}, stateStore=${this.stateStore.constructor.name}`);
         this.patch();
         if (opts.retrofitExisting) {
             // Try to re-register existing tools (if SDK allows)
             this.retrofitExistingTools();
         }
     }
+
 
     /** Return server (useful for chaining) */
     getServer() {
@@ -65,7 +71,14 @@ export class PayMCP {
                 };
 
                 // wrap the handler in a payment flow
-                wrapped = self.wrapperFactory(handler, self.server, provider, price, name);
+                wrapped = self.wrapperFactory({
+                    func: handler,
+                    server: self.server,
+                    provider,
+                    priceInfo: price,
+                    toolName: name,
+                    stateStore: self.stateStore
+                });
             }
 
             return self.originalRegisterTool(name, config, wrapped);

@@ -1,11 +1,5 @@
 
-export enum PaymentFlow {
-    ELICITATION = "ELICITATION",
-    TWO_STEP = "TWO_STEP",
-    PROGRESS = "PROGRESS",
-    OOB = "OOB"
-    // TODO: OOB
-}
+// PaymentFlow enum removed - use FlowType from constants.js instead
 
 export interface CreatePaymentResult {
   paymentId: string;
