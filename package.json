@@ -18,18 +18,32 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean --sourcemap"
   },
-  "author": "Blust Inc",
+  "author": "Walleot",
   "license": "MIT",
+  "homepage": "https://github.com/PayMCP/paymcp-ts#readme",
+  "bugs": {
+    "url": "https://github.com/PayMCP/paymcp-ts/issues"
+  },
   "devDependencies": {
     "@types/node": "^24.0.14",
+    "@types/redis": "^4.0.10",
     "tsup": "^8.5.0",
     "typescript": "^5.8.3"
   },
   "sideEffects": false,
   "keywords": [
-    "payments",
     "mcp",
-    "typescript"
+    "payments",
+    "payment-gateway",
+    "stripe",
+    "paypal",
+    "square",
+    "adyen",
+    "coinbase",
+    "walleot",
+    "model-context-protocol",
+    "typescript",
+    "payment-processing"
   ],
   "engines": {
     "node": ">=18"
@@ -42,9 +56,12 @@
     "url": "git+https://github.com/PayMCP/paymcp-ts"
   },
   "packageManager": "pnpm@10.12.4+sha512.5ea8b0deed94ed68691c9bad4c955492705c5eeb8a87ef86bc62c74a26b037b08ff9570f108b2e4dbd1dd1a9186fea925e527f141c648e85af45631074680184",
-  "dependencies": {
-    "@types/redis": "^4.0.10",
-    "redis": "^5.8.2",
-    "zod": "3.23.4"
+  "peerDependencies": {
+    "redis": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "redis": {
+      "optional": true
+    }
   }
 }
