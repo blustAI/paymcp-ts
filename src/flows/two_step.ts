@@ -29,6 +29,13 @@ import type { StateStoreProvider } from "../core/state-store.js";
 import { paymentPromptMessage } from "../utils/messages.js";
 import { Logger } from "../types/logger.js";
 import { normalizeStatus } from "../utils/payment.js";
+import { extractSessionId, logContextInfo } from "../utils/context.js";
+import {
+  checkExistingPayment,
+  savePaymentState,
+  updatePaymentStatus,
+  cleanupPaymentState
+} from "../utils/state.js";
 
 import { z } from "zod";
 
@@ -188,12 +195,10 @@ function ensureConfirmTool(
     // We're good—consume stored args and call original.
     PENDING_ARGS.delete(String(paymentId));
 
-    // Clean up state if we used state store
-    if (stateStore) {
-      await stateStore.delete(paymentId);
-      if (sessionId && sessionId !== paymentId) {
-        await stateStore.delete(sessionId);
-      }
+    // Clean up state using utility
+    await cleanupPaymentState(paymentId, stateStore, log);
+    if (sessionId && sessionId !== paymentId) {
+      await cleanupPaymentState(sessionId, stateStore, log);
     }
 
     log?.info?.(`[PayMCP:TwoStep] payment confirmed; calling original tool ${toolName}`);
@@ -257,84 +262,58 @@ export const makePaidWrapper: PaidWrapperFactory = (
 
     log?.debug?.(`[PayMCP:TwoStep] initiate wrapper invoked for ${toolName}, hasArgs=${hasArgs}`);
 
-    // Extract session ID from extra context
-    const sessionId = extra?.sessionId;
+    // Extract session ID from extra context using utility
+    const sessionId = extractSessionId(extra, log);
 
-    // Check for existing payment state if we have a session ID and state store
-    if (sessionId && stateStore) {
-      log?.debug?.(`[PayMCP:TwoStep] Checking state store for sessionId=${sessionId}`);
-      const state = await stateStore.get(sessionId);
+    // Check for existing payment state using utility
+    const checkResult = await checkExistingPayment(
+      sessionId, stateStore, provider, toolName, { params: toolArgs }, log
+    );
 
-      if (state) {
-        log?.info?.(`[PayMCP:TwoStep] Found existing payment state for sessionId=${sessionId}`);
-        const paymentId = state.payment_id;
-        const paymentUrl = state.payment_url;
-        const storedToolName = state.tool_name;
+    // If payment was already completed, execute immediately
+    if (checkResult.shouldExecuteImmediately) {
+      const argsToUse = checkResult.storedArgs?.params || toolArgs;
+      return await callOriginal(func, argsToUse, extra);
+    }
 
-        // Check payment status with provider
-        try {
-          const status = normalizeStatus(await provider.getPaymentStatus(paymentId));
-          log?.info?.(`[PayMCP:TwoStep] Payment status for ${paymentId}: ${status}`);
+    // If payment exists but is still pending, return existing payment info
+    if (checkResult.paymentId && checkResult.paymentUrl) {
+      const paymentId = checkResult.paymentId;
+      const paymentUrl = checkResult.paymentUrl;
 
-          if (status === "paid") {
-            // Payment already completed! Execute tool with original arguments
-            log?.info?.(`[PayMCP:TwoStep] Previous payment detected, executing immediately`);
+      const _message = paymentPromptMessage(
+        paymentUrl,
+        priceInfo.amount,
+        priceInfo.currency
+      );
 
-            // Get original args from state
-            const originalArgs = state.tool_args?.params;
+      const message = JSON.stringify({
+        "message": `Payment still pending: ${_message}`,
+        "payment_url": paymentUrl,
+        "payment_id": paymentId,
+        "next_step": confirmToolName
+      });
 
-            // Clean up state
-            await stateStore.delete(sessionId);
-
-            // Use stored arguments if they were for this function
-            if (storedToolName === toolName) {
-              // Use stored args instead of current ones
-              return await callOriginal(func, originalArgs, extra);
-            } else {
-              // Different function, just execute normally
-              return await callOriginal(func, toolArgs, extra);
-            }
-          } else if (status === "pending") {
-            // Payment still pending, return existing payment info
-            const _message = paymentPromptMessage(
-              paymentUrl,
-              priceInfo.amount,
-              priceInfo.currency
-            );
-
-            const message = JSON.stringify({
-              "message": `Payment still pending: ${_message}`,
-              "payment_url": paymentUrl,
-              "payment_id": paymentId,
-              "next_step": confirmToolName
-            });
-
-            return {
-              content: [{ type: "text", text: message }],
-              structured_content: {
-                payment_url: paymentUrl,
-                payment_id: paymentId,
-                next_step: confirmToolName,
-                status: "payment_pending",
-                amount: priceInfo.amount,
-                currency: priceInfo.currency,
-              },
-              data: {
-                payment_url: paymentUrl,
-                payment_id: paymentId,
-                next_step: confirmToolName,
-                status: "payment_pending",
-                amount: priceInfo.amount,
-                currency: priceInfo.currency,
-              },
-              message,
-            };
-          }
-        } catch (err) {
-          log?.error?.(`[PayMCP:TwoStep] Error checking payment status: ${err}`);
-          // Continue to create new payment if error
-        }
-      }
+      return {
+        content: [{ type: "text", text: message }],
+        structured_content: {
+          payment_url: paymentUrl,
+          payment_id: paymentId,
+          next_step: confirmToolName,
+          status: "payment_pending",
+          amount: priceInfo.amount,
+          currency: priceInfo.currency,
+        },
+        data: {
+          payment_url: paymentUrl,
+          payment_id: paymentId,
+          next_step: confirmToolName,
+          status: "payment_pending",
+          amount: priceInfo.amount,
+          currency: priceInfo.currency,
+        },
+        message,
+      };
     }
 
     // Create payment.
@@ -346,34 +325,24 @@ export const makePaidWrapper: PaidWrapperFactory = (
 
     const pidStr = String(paymentId);
 
-    // Store in state store if available
-    if (stateStore) {
-      // Use session_id as primary key if available, otherwise use payment_id
-      const storeKey = sessionId || pidStr;
-      log?.info?.(`[PayMCP:TwoStep] Storing payment state with key=${storeKey}`);
-      await stateStore.put(storeKey, {
+    // Store payment state using utility
+    await savePaymentState(
+      sessionId, stateStore, paymentId, paymentUrl,
+      toolName, { params: toolArgs }, 'requested', log
+    );
+
+    // Also store by payment_id for backward compatibility with two-step flow
+    if (stateStore && sessionId && sessionId !== pidStr) {
+      await stateStore.put(pidStr, {
         session_id: sessionId,
         payment_id: paymentId,
         payment_url: paymentUrl,
         tool_name: toolName,
-        tool_args: { params: toolArgs },  // Store args for replay
+        tool_args: { params: toolArgs },
         status: 'requested',
         created_at: Date.now()
       });
-
-      // Also store by payment_id for backward compatibility
-      if (sessionId && storeKey !== pidStr) {
-        await stateStore.put(pidStr, {
-          session_id: sessionId,
-          payment_id: paymentId,
-          payment_url: paymentUrl,
-          tool_name: toolName,
-          tool_args: { params: toolArgs },
-          status: 'requested',
-          created_at: Date.now()
-        });
-      }
-    } else {
+    } else if (!stateStore) {
       // Fall back to legacy PENDING_ARGS
       PENDING_ARGS.set(pidStr, { args: toolArgs, ts: Date.now() });
     }

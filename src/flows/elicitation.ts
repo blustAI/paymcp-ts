@@ -7,6 +7,13 @@ import type { StateStoreProvider } from "../core/state-store.js";
 import { Logger } from "../types/logger.js";
 import { normalizeStatus } from "../utils/payment.js";
 import { paymentPromptMessage } from "../utils/messages.js";
+import { extractSessionId, logContextInfo } from "../utils/context.js";
+import {
+  checkExistingPayment,
+  savePaymentState,
+  updatePaymentStatus,
+  cleanupPaymentState
+} from "../utils/state.js";
 import { z } from "zod";
 
 // Used for extra.sendRequest() result validation; accept any response shape.
@@ -53,8 +60,8 @@ export const makePaidWrapper: PaidWrapperFactory = (
     const toolArgs = hasArgs ? paramsOrExtra : undefined;
     const extra: ToolExtraLike = hasArgs ? (maybeExtra as ToolExtraLike) : (paramsOrExtra as ToolExtraLike);
 
-    // Extract session ID from extra context
-    const sessionId = extra?.sessionId;
+    // Extract session ID from extra context using utility function
+    const sessionId = extractSessionId(extra, log);
 
     const elicitSupported = typeof (extra as any)?.sendRequest === "function";
     if (!elicitSupported) {
@@ -67,62 +74,20 @@ export const makePaidWrapper: PaidWrapperFactory = (
       };
     }
 
-    // Check for existing payment state if we have a session ID and state store
-    let paymentId: string | undefined;
-    let paymentUrl: string | undefined;
+    // Check for existing payment state using utility
+    const checkResult = await checkExistingPayment(
+      sessionId, stateStore, provider, toolName, { params: toolArgs }, log
+    );
 
-    if (sessionId && stateStore) {
-      log.debug?.(`[PayMCP:Elicitation] Checking state store for sessionId=${sessionId}`);
-      const state = await stateStore.get(sessionId);
-
-      if (state) {
-        log.info?.(`[PayMCP:Elicitation] Found existing payment state for sessionId=${sessionId}`);
-        paymentId = state.payment_id;
-        paymentUrl = state.payment_url;
-        const storedArgs = state.tool_args;
-        const storedToolName = state.tool_name;
-
-        // Check payment status with provider
-        try {
-          const status = normalizeStatus(await provider.getPaymentStatus(paymentId));
-          log.info?.(`[PayMCP:Elicitation] Payment status for ${paymentId}: ${status}`);
-
-          if (status === "paid") {
-            // Payment already completed! Execute tool with original arguments
-            log.info?.(`[PayMCP:Elicitation] Previous payment detected, executing with original request`);
-
-            // Clean up state
-            await stateStore.delete(sessionId);
-
-            // Use stored arguments if they were for this function
-            if (storedToolName === toolName) {
-              // Use stored args instead of current ones
-              const result = await callOriginal(func, storedArgs?.params, extra);
-              return result;
-            } else {
-              // Different function, just execute normally
-              return await callOriginal(func, toolArgs, extra);
-            }
-          } else if (status === "pending") {
-            // Payment still pending, continue with existing payment
-            log.info?.(`[PayMCP:Elicitation] Payment still pending, continuing with existing payment`);
-            // Continue to elicitation with existing payment
-          } else if (status === "canceled") {
-            // Payment failed, clean up and create new one
-            log.info?.(`[PayMCP:Elicitation] Previous payment canceled, creating new payment`);
-            await stateStore.delete(sessionId);
-            paymentId = undefined;
-            paymentUrl = undefined;
-          }
-        } catch (err) {
-          log.error?.(`[PayMCP:Elicitation] Error checking payment status: ${err}`);
-          // If we can't check status, create a new payment
-          if (stateStore) await stateStore.delete(sessionId);
-          paymentId = undefined;
-          paymentUrl = undefined;
-        }
-      }
+    // If payment was already completed, execute immediately
+    if (checkResult.shouldExecuteImmediately) {
+      const argsToUse = checkResult.storedArgs?.params || toolArgs;
+      return await callOriginal(func, argsToUse, extra);
     }
+
+    // Use existing payment if available
+    let paymentId = checkResult.paymentId;
+    let paymentUrl = checkResult.paymentUrl;
 
     // 1. Create payment session if needed
     if (!paymentId) {
@@ -135,19 +100,11 @@ export const makePaidWrapper: PaidWrapperFactory = (
       paymentUrl = payment.paymentUrl;
       log.debug?.(`[PayMCP:Elicitation] created payment id=${paymentId} url=${paymentUrl}`);
 
-      // Store payment state if we have session ID and state store
-      if (sessionId && stateStore) {
-        log.info?.(`[PayMCP:Elicitation] Storing payment state for sessionId=${sessionId}`);
-        await stateStore.put(sessionId, {
-          session_id: sessionId,
-          payment_id: paymentId,
-          payment_url: paymentUrl,
-          tool_name: toolName,
-          tool_args: { params: toolArgs },  // Store args for replay
-          status: 'requested',
-          created_at: Date.now()
-        });
-      }
+      // Store payment state using utility
+      await savePaymentState(
+        sessionId, stateStore, paymentId, paymentUrl,
+        toolName, { params: toolArgs }, 'requested', log
+      );
     }
 
     // 2. Run elicitation loop (client confirms payment)
@@ -172,13 +129,7 @@ export const makePaidWrapper: PaidWrapperFactory = (
       log.warn?.(`[PayMCP:Elicitation] elicitation loop error: ${String(err)}`);
       userAction = "unknown";
       // Don't delete state on timeout - payment might still complete
-      if (sessionId && stateStore) {
-        const state = await stateStore.get(sessionId);
-        if (state) {
-          state.status = 'timeout';
-          await stateStore.put(sessionId, state);
-        }
-      }
+      await updatePaymentStatus(sessionId, stateStore, 'timeout', log);
     }
 
     // 3. Double‑check with provider just in case
@@ -205,21 +156,13 @@ export const makePaidWrapper: PaidWrapperFactory = (
     if (normalizeStatus(paymentStatus) === "paid" || userAction === "accept") {
       log.info?.(`[PayMCP:Elicitation] payment confirmed; invoking original tool ${toolName}`);
 
-      // Update state to paid if we have state store
-      if (sessionId && stateStore) {
-        const state = await stateStore.get(sessionId);
-        if (state) {
-          state.status = 'paid';
-          await stateStore.put(sessionId, state);
-        }
-      }
+      // Update state to paid
+      await updatePaymentStatus(sessionId, stateStore, 'paid', log);
 
       const toolResult = await callOriginal(func, toolArgs, extra);
 
       // Clean up state after successful execution
-      if (sessionId && stateStore) {
-        await stateStore.delete(sessionId);
-      }
+      await cleanupPaymentState(sessionId, stateStore, log);
       // Ensure toolResult has required MCP 'content' field; if not, synthesize text.
       if (!toolResult || !Array.isArray((toolResult as any).content)) {
         return {
@@ -242,9 +185,7 @@ export const makePaidWrapper: PaidWrapperFactory = (
       log.info?.(`[PayMCP:Elicitation] payment canceled by user or provider (status=${paymentStatus}, action=${userAction})`);
 
       // Clean up state on cancellation
-      if (sessionId && stateStore) {
-        await stateStore.delete(sessionId);
-      }
+      await cleanupPaymentState(sessionId, stateStore, log);
 
       return {
         content: [{ type: "text", text: "Payment canceled by user." }],
@@ -259,13 +200,7 @@ export const makePaidWrapper: PaidWrapperFactory = (
     log.info?.(`[PayMCP:Elicitation] payment still pending after elicitation attempts; returning pending result.`);
 
     // Keep state for pending payments
-    if (sessionId && stateStore) {
-      const state = await stateStore.get(sessionId);
-      if (state) {
-        state.status = 'pending';
-        await stateStore.put(sessionId, state);
-      }
-    }
+    await updatePaymentStatus(sessionId, stateStore, 'pending', log);
 
     return {
       content: [{ type: "text", text: "Payment not yet received. Open the link and try again." }],
