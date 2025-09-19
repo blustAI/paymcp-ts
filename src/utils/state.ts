@@ -43,7 +43,7 @@ export async function checkExistingPayment(
 
     // Check payment status with provider
     try {
-        const status = normalizeStatus(await provider.getPaymentStatus(paymentId));
+        const status = normalizeStatus(await provider.getPaymentStatus(paymentId!));
         log?.info?.(`Payment status for ${paymentId}: ${status}`);
 
         if (status === "paid") {

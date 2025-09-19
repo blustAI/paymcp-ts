@@ -150,7 +150,7 @@ export const makePaidWrapper: PaidWrapperFactory = (
         await safeReportProgress(
             extra,
             log,
-            paymentPromptMessage(paymentUrl, priceInfo.amount, priceInfo.currency),
+            paymentPromptMessage(paymentUrl!, priceInfo.amount, priceInfo.currency),
             0,
             100
         );

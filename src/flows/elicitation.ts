@@ -115,10 +115,10 @@ export const makePaidWrapper: PaidWrapperFactory = (
       log.debug?.(`[PayMCP:Elicitation] starting elicitation loop for paymentId=${paymentId}`);
       const loopResult = await runElicitationLoop(
         extra,
-        paymentPromptMessage(paymentUrl, priceInfo.amount, priceInfo.currency),
+        paymentPromptMessage(paymentUrl!, priceInfo.amount, priceInfo.currency),
         provider,
         paymentId,
-        paymentUrl,
+        paymentUrl!,
         5,
         log
       );
