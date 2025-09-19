@@ -1,6 +1,6 @@
 {
   "name": "paymcp",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Provider-agnostic payment layer for MCP (Model Context Protocol) tools and agents.",
   "type": "module",
   "main": "./dist/index.cjs",

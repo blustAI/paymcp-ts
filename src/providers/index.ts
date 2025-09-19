@@ -5,6 +5,7 @@ import { SquareProvider } from "./square.js";
 import type { BasePaymentProvider } from "./base.js";
 import { type Logger } from "../types/logger.js";
 import { AdyenProvider } from "./adyen.js";
+import { CoinbaseProvider } from "./coinbase.js";
 
 /** Registry of known providers. */
 const PROVIDER_MAP: Record<
@@ -15,7 +16,8 @@ const PROVIDER_MAP: Record<
   walleot: WalleotProvider,
   paypal: PayPalProvider,
   square: SquareProvider,
-  adyen: AdyenProvider
+  adyen: AdyenProvider,
+  coinbase: CoinbaseProvider
 };
 
 export type ProviderInstances = Record<string, BasePaymentProvider>;

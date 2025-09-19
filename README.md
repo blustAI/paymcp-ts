@@ -127,8 +127,10 @@ Start your MCP transport (stdio / http / ws) as usual. Any MCP client that conne
 ## 🧩 Supported Providers
 
 - ✅ [Adyen](https://www.adyen.com)
+- ✅ [Coinbase Commerce](https://commerce.coinbase.com)
 - ✅ [PayPal](https://paypal.com)
 - ✅ [Stripe](https://stripe.com)
+- ✅ [Square](https://squareup.com)
 - ✅ [Walleot](https://walleot.com/developers)
 
 - 🔜 More providers welcome! Open an issue or PR.
